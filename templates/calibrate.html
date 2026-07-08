@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>עורך כיול שדות - טופס 101</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+    <style>
+        body { background-color: #f0f2f5; font-family: system-ui, sans-serif; }
+        .editor-wrap { display: flex; height: 100vh; }
+        .sidebar { width: 420px; flex-shrink: 0; background: #fff; border-left: 1px solid #dee2e6; overflow-y: auto; padding: 16px; }
+        .canvas-area { flex-grow: 1; overflow: auto; position: relative; background: #6c757d; display: flex; justify-content: center; padding: 20px; }
+        #image-container { position: relative; display: inline-block; }
+        #form-image { display: block; max-width: none; box-shadow: 0 0 20px rgba(0,0,0,0.4); user-select: none; }
+
+        .box { position: absolute; border: 2px solid rgba(25,135,84,0.9); background: rgba(25,135,84,0.08);
+               cursor: move; z-index: 5; box-sizing: border-box; overflow: hidden;
+               display: flex; align-items: center; }
+        .box.selected { border-color: #0d6efd; background: rgba(13,110,253,0.12); z-index: 10; border-width: 3px; }
+        .box.overflow-flag { border-color: #dc3545 !important; background: rgba(220,53,69,0.18) !important; }
+        .box-text { pointer-events: none; white-space: nowrap; font-family: 'DejaVu Sans', Arial, sans-serif;
+                    color: #000; line-height: 1; direction: rtl; }
+        .box-label { position: absolute; top: -20px; right: 0; font-size: 10px; background: rgba(0,0,0,0.65);
+                     color: #fff; padding: 1px 5px; border-radius: 3px; white-space: nowrap; pointer-events: none; z-index: 2; }
+        .box-fontsize-badge { position: absolute; bottom: -18px; left: 0; font-size: 9px; background: rgba(13,110,253,0.85);
+                     color: #fff; padding: 0px 4px; border-radius: 3px; pointer-events: none; }
+        .box-overflow-badge { position: absolute; bottom: -18px; right: 0; font-size: 9px; background: rgba(220,53,69,0.95);
+                     color: #fff; padding: 0px 4px; border-radius: 3px; pointer-events: none; }
+        .resize-handle { position: absolute; width: 14px; height: 14px; background: #0d6efd; border: 2px solid #fff;
+                          border-radius: 50%; z-index: 11; }
+        .resize-handle.se { bottom: -7px; left: -7px; cursor: nwse-resize; }
+
+        .field-item { padding: 7px 10px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; }
+        .field-item:hover { background: #f1f3f5; }
+        .field-item.selected { background: #cfe2ff; font-weight: bold; }
+        .field-item.has-overflow i { color: #dc3545; }
+        .sticky-top-box { position: sticky; top: 0; background: #fff; z-index: 20; padding-bottom: 10px; }
+        #zoom-controls { position: sticky; top: 10px; z-index: 15; }
+        .live-badge { font-size: 0.7rem; padding: 2px 6px; }
+    </style>
+</head>
+<body>
+
+<div class="editor-wrap">
+    <div class="sidebar">
+        <div class="sticky-top-box">
+            <h5 class="mb-1"><i class="bi bi-bounding-box-circles"></i> עורך כיול שדות</h5>
+            <p class="text-muted small mb-2">
+                גררו כל תיבה למיקום הרצוי, מתחו מהפינה הכחולה לשינוי גודל. הטקסט האמיתי מוצג <strong>בזמן אמת</strong> בתוך כל תיבה, כולל גודל הפונט שיחושב אוטומטית (Auto-Fit) בהפקת ה-PDF בפועל.
+                תיבה אדומה = הטקסט לא נכנס גם בגודל הפונט המינימלי (Overflow).
+            </p>
+            <div class="d-grid gap-2 mb-2">
+                <button class="btn btn-success" onclick="saveCalibration()"><i class="bi bi-save"></i> שמור קואורדינטות (המערכת תשתמש רק בהן)</button>
+                <button class="btn btn-outline-primary" onclick="serverVerify()"><i class="bi bi-server"></i> אימות מול השרת (PDF אמיתי)</button>
+            </div>
+            <div id="save-status" class="small mb-2"></div>
+        </div>
+
+        <div id="selected-field-box" class="border rounded p-2 mb-3 bg-light d-none">
+            <strong id="selected-field-label"></strong>
+            <span id="selected-live-badge" class="badge live-badge ms-1"></span>
+
+            <div class="mt-2">
+                <label class="form-label small mb-0">טקסט לבדיקה (ערכי קיצון = בדיקת Overflow אמיתית)</label>
+                <input type="text" id="input-sample" class="form-control form-control-sm" oninput="updateSampleText()">
+            </div>
+
+            <div class="row g-1 mt-1">
+                <div class="col-6">
+                    <label class="form-label small mb-0">X</label>
+                    <input type="number" id="input-x" class="form-control form-control-sm" oninput="updateFromInputs()">
+                </div>
+                <div class="col-6">
+                    <label class="form-label small mb-0">Y</label>
+                    <input type="number" id="input-y" class="form-control form-control-sm" oninput="updateFromInputs()">
+                </div>
+                <div class="col-6">
+                    <label class="form-label small mb-0">רוחב</label>
+                    <input type="number" id="input-w" class="form-control form-control-sm" oninput="updateFromInputs()">
+                </div>
+                <div class="col-6">
+                    <label class="form-label small mb-0">גובה</label>
+                    <input type="number" id="input-h" class="form-control form-control-sm" oninput="updateFromInputs()">
+                </div>
+                <div class="col-12 mt-1" id="numchars-box">
+                    <label class="form-label small mb-0">מספר משבצות (ת.ז/תאריך)</label>
+                    <input type="number" id="input-numchars" class="form-control form-control-sm" oninput="updateFromInputs()">
+                </div>
+            </div>
+        </div>
+
+        <div id="field-list"></div>
+    </div>
+
+    <div class="canvas-area">
+        <div id="zoom-controls" class="btn-group btn-group-sm mb-2">
+            <button class="btn btn-light" onclick="changeZoom(-0.1)"><i class="bi bi-zoom-out"></i></button>
+            <button class="btn btn-light" onclick="changeZoom(0.1)"><i class="bi bi-zoom-in"></i></button>
+        </div>
+        <div id="image-container">
+            <img id="form-image" src="/calibrate/template-image" alt="טופס 101">
+        </div>
+    </div>
+</div>
+
+<script>
+    const FIELDS = {{ fields | tojson }};
+    const SECTION_NAMES = {"א":"מעסיק","ב":"עובד/ת","ג":"בן/בת זוג","ד":"ילדים","ה":"הכנסות נוספות","ו":"תיאום מס","ז":"נקודות זיכוי","ח":"הצהרה"};
+
+    // ערכי דמה ריאליסטיים לכל שדה - ניתנים לעריכה בעורך לבדיקת מקרי קיצון
+    const DEFAULT_SAMPLES = {
+        tax_year: "2026", employer_name: "חברת הייטק ופיתוח בעמ", employer_tik_nikuyim: "12345678",
+        tz: "302810049", last_name: "אברהמסון-כהן", first_name: "יהונתן", birth_date: "150590", aliyah_date: "010305",
+        address_street: "שדרות הרצל 128 דירה 12", address_city: "ירושלים", address_zip: "9100000",
+        mobile: "050-1234567", email: "david.cohen@example.com", kupat_holim_name: "כללית",
+        spouse_tz: "203810049", spouse_last_name: "אברהמסון-כהן", spouse_first_name: "רבקה",
+        spouse_birth_date: "200792", spouse_aliyah_date: "100910",
+        child_name: "אלישבע רבקה", child_tz: "111111118", child_dob: "010115",
+        locality_name: "קריית שמונה",
+    };
+    const CHECKBOX_FIELDS = new Set(["sex_male","sex_female","resident_yes","resident_no","marital_married","marital_single",
+        "spouse_income_none","spouse_income_has","no_other_income","other_income_salary","other_income_pension",
+        "other_income_allowance","other_income_partial","credit_here","credit_nothere","tax_coordination_approval",
+        "credit_disabled_blind","credit_resident_locality","credit_single_parent","credit_children_in_custody",
+        "credit_children_not_in_custody","credit_single_parent_toddlers","credit_children_disabled",
+        "credit_alimony_ex_spouse","credit_academic_degree","credit_reserve_duty","credit_new_immigrant","declared_true"]);
+
+    let coords = {};
+    let sampleTexts = {};
+    let selectedKey = null;
+    let zoom = 0.42;
+    let naturalWidth = 2480, naturalHeight = 3508;
+
+    const img = document.getElementById('form-image');
+    const container = document.getElementById('image-container');
+    const measureCanvas = document.createElement('canvas');
+    const measureCtx = measureCanvas.getContext('2d');
+
+    function measureTextWidth(text, fontSizePx) {
+        measureCtx.font = `${fontSizePx}px "DejaVu Sans", Arial, sans-serif`;
+        return measureCtx.measureText(text).width;
+    }
+
+    // תואם ללוגיקת fit_font_to_box בשרת (pdf_service.py) - חיפוש הגודל הגדול ביותר שנכנס
+    function fitFontSize(text, boxWidth, boxHeight, maxSize = 30, minSize = 12) {
+        if (!text) return { size: maxSize, overflow: false };
+        for (let size = maxSize; size >= minSize; size--) {
+            const w = measureTextWidth(text, size);
+            const h = size * 1.15;
+            if (w <= boxWidth && h <= boxHeight) return { size, overflow: false };
+        }
+        return { size: minSize, overflow: true };
+    }
+
+    function applyZoom() {
+        img.style.width = (naturalWidth * zoom) + 'px';
+        img.style.height = (naturalHeight * zoom) + 'px';
+        renderBoxes();
+    }
+    function changeZoom(delta) {
+        zoom = Math.min(1.2, Math.max(0.15, zoom + delta));
+        applyZoom();
+    }
+    img.onload = () => {
+        naturalWidth = img.naturalWidth;
+        naturalHeight = img.naturalHeight;
+        applyZoom();
+    };
+
+    async function loadCoordinates() {
+        const res = await fetch('/api/calibration');
+        coords = await res.json();
+        Object.keys(coords).forEach(k => {
+            if (coords[k].width === undefined) coords[k].width = 200;
+            if (coords[k].height === undefined) coords[k].height = 40;
+            sampleTexts[k] = DEFAULT_SAMPLES[k] || (CHECKBOX_FIELDS.has(k) ? '' : 'טקסט לדוגמה');
+        });
+        renderFieldList();
+        renderBoxes();
+    }
+
+    function renderFieldList() {
+        const bySection = {};
+        FIELDS.forEach(([key, label, section]) => {
+            if (!bySection[section]) bySection[section] = [];
+            bySection[section].push([key, label]);
+        });
+        const listEl = document.getElementById('field-list');
+        listEl.innerHTML = '';
+        Object.keys(bySection).sort().forEach(section => {
+            const header = document.createElement('div');
+            header.className = 'text-muted small fw-bold mt-2 mb-1';
+            header.innerText = `חלק ${section} - ${SECTION_NAMES[section] || ''}`;
+            listEl.appendChild(header);
+            bySection[section].forEach(([key, label]) => {
+                const item = document.createElement('div');
+                item.className = 'field-item';
+                item.id = 'item-' + key;
+                item.innerHTML = `<span>${label}</span><i class="bi bi-exclamation-triangle-fill d-none"></i>`;
+                item.onclick = () => selectField(key);
+                listEl.appendChild(item);
+            });
+        });
+    }
+
+    function computeBoxDisplay(key) {
+        const c = coords[key];
+        const text = sampleTexts[key] || '';
+        if (CHECKBOX_FIELDS.has(key)) {
+            return { fitted: 'X', fontSize: Math.min(c.width, c.height, 28), overflow: false, isCheckbox: true };
+        }
+        if (c.num_chars) {
+            // שדה משבצות: overflow אם הטקסט ארוך ממספר המשבצות
+            const overflow = text.length > c.num_chars;
+            const stepX = c.width / c.num_chars;
+            const fontSize = Math.min(30, Math.max(10, stepX * 0.8));
+            return { fitted: text, fontSize, overflow, isGrid: true, numChars: c.num_chars, stepX };
+        }
+        const { size, overflow } = fitFontSize(text, c.width, c.height);
+        return { fitted: text, fontSize: size, overflow, isCheckbox: false };
+    }
+
+    function renderBoxes() {
+        container.querySelectorAll('.box').forEach(m => m.remove());
+        let anyOverflow = false;
+        FIELDS.forEach(([key]) => {
+            const c = coords[key];
+            if (!c || key === 'child_row_height') return;
+            const display = computeBoxDisplay(key);
+            if (display.overflow) {
+                anyOverflow = true;
+                const item = document.getElementById('item-' + key);
+                if (item) { item.classList.add('has-overflow'); item.querySelector('i').classList.remove('d-none'); }
+            } else {
+                const item = document.getElementById('item-' + key);
+                if (item) { item.classList.remove('has-overflow'); item.querySelector('i').classList.add('d-none'); }
+            }
+
+            const box = document.createElement('div');
+            box.className = 'box' + (key === selectedKey ? ' selected' : '') + (display.overflow ? ' overflow-flag' : '');
+            box.style.left = (c.x * zoom) + 'px';
+            box.style.top = (c.y * zoom) + 'px';
+            box.style.width = (c.width * zoom) + 'px';
+            box.style.height = (c.height * zoom) + 'px';
+            box.dataset.key = key;
+
+            const label = document.createElement('div');
+            label.className = 'box-label';
+            label.innerText = key;
+            box.appendChild(label);
+
+            const textEl = document.createElement('div');
+            textEl.className = 'box-text';
+            if (display.isGrid) {
+                // תצוגת משבצות: כל תו במרווח קבוע, כמו בשרת
+                textEl.style.display = 'flex';
+                textEl.style.gap = ((display.stepX - display.fontSize * 0.6) * zoom) + 'px';
+                textEl.style.fontSize = (display.fontSize * zoom) + 'px';
+                [...display.fitted].slice(0, display.numChars).forEach(ch => {
+                    const span = document.createElement('span');
+                    span.innerText = ch;
+                    textEl.appendChild(span);
+                });
+            } else {
+                textEl.style.fontSize = (display.fontSize * zoom) + 'px';
+                textEl.innerText = display.fitted;
+            }
+            box.appendChild(textEl);
+
+            const fsBadge = document.createElement('div');
+            fsBadge.className = 'box-fontsize-badge';
+            fsBadge.innerText = Math.round(display.fontSize) + 'px';
+            box.appendChild(fsBadge);
+
+            if (display.overflow) {
+                const ofBadge = document.createElement('div');
+                ofBadge.className = 'box-overflow-badge';
+                ofBadge.innerText = 'OVERFLOW';
+                box.appendChild(ofBadge);
+            }
+
+            const handle = document.createElement('div');
+            handle.className = 'resize-handle se';
+            handle.addEventListener('pointerdown', (e) => startResize(e, key));
+            box.appendChild(handle);
+
+            box.addEventListener('pointerdown', (e) => {
+                if (e.target === handle) return;
+                startMove(e, key);
+            });
+
+            container.appendChild(box);
+        });
+    }
+
+    function startMove(e, key) {
+        selectField(key);
+        e.stopPropagation();
+        const startX = e.clientX, startY = e.clientY;
+        const origX = coords[key].x, origY = coords[key].y;
+        function onMove(ev) {
+            coords[key].x = Math.max(0, Math.round(origX + (ev.clientX - startX) / zoom));
+            coords[key].y = Math.max(0, Math.round(origY + (ev.clientY - startY) / zoom));
+            renderBoxes();
+            if (selectedKey === key) updateInputsFromCoords();
+        }
+        function onUp() {
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+        }
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+    }
+
+    function startResize(e, key) {
+        selectField(key);
+        e.stopPropagation();
+        e.preventDefault();
+        const startX = e.clientX, startY = e.clientY;
+        const origW = coords[key].width, origH = coords[key].height;
+        function onMove(ev) {
+            coords[key].width = Math.max(15, Math.round(origW + (ev.clientX - startX) / zoom));
+            coords[key].height = Math.max(15, Math.round(origH + (ev.clientY - startY) / zoom));
+            renderBoxes();
+            if (selectedKey === key) updateInputsFromCoords();
+        }
+        function onUp() {
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+        }
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+    }
+
+    function selectField(key) {
+        selectedKey = key;
+        document.querySelectorAll('.field-item').forEach(el => el.classList.remove('selected'));
+        const item = document.getElementById('item-' + key);
+        if (item) { item.classList.add('selected'); item.scrollIntoView({block: 'nearest'}); }
+
+        const fieldMeta = FIELDS.find(f => f[0] === key);
+        document.getElementById('selected-field-box').classList.remove('d-none');
+        document.getElementById('selected-field-label').innerText = fieldMeta ? fieldMeta[1] : key;
+
+        const hasNumChars = coords[key] && ('num_chars' in coords[key]) && coords[key].num_chars;
+        document.getElementById('numchars-box').style.display = hasNumChars ? 'block' : 'none';
+        document.getElementById('input-sample').style.display = CHECKBOX_FIELDS.has(key) ? 'none' : 'block';
+        document.getElementById('input-sample').value = sampleTexts[key] || '';
+
+        updateInputsFromCoords();
+        updateLiveBadge();
+        renderBoxes();
+    }
+
+    function updateLiveBadge() {
+        if (!selectedKey) return;
+        const display = computeBoxDisplay(selectedKey);
+        const badge = document.getElementById('selected-live-badge');
+        if (CHECKBOX_FIELDS.has(selectedKey)) {
+            badge.innerText = 'תיבת סימון';
+            badge.className = 'badge live-badge ms-1 bg-secondary';
+        } else if (display.overflow) {
+            badge.innerText = `Overflow! (גופן מינ' ${Math.round(display.fontSize)}px עדיין לא נכנס)`;
+            badge.className = 'badge live-badge ms-1 bg-danger';
+        } else {
+            badge.innerText = `נכנס בגופן ${Math.round(display.fontSize)}px`;
+            badge.className = 'badge live-badge ms-1 bg-success';
+        }
+    }
+
+    function updateSampleText() {
+        if (!selectedKey) return;
+        sampleTexts[selectedKey] = document.getElementById('input-sample').value;
+        updateLiveBadge();
+        renderBoxes();
+    }
+
+    function updateInputsFromCoords() {
+        if (!selectedKey || !coords[selectedKey]) return;
+        const c = coords[selectedKey];
+        document.getElementById('input-x').value = c.x;
+        document.getElementById('input-y').value = c.y;
+        document.getElementById('input-w').value = c.width;
+        document.getElementById('input-h').value = c.height;
+        if (c.num_chars) document.getElementById('input-numchars').value = c.num_chars;
+    }
+
+    function updateFromInputs() {
+        if (!selectedKey) return;
+        const c = coords[selectedKey];
+        c.x = parseInt(document.getElementById('input-x').value) || 0;
+        c.y = parseInt(document.getElementById('input-y').value) || 0;
+        c.width = Math.max(15, parseInt(document.getElementById('input-w').value) || 15);
+        c.height = Math.max(15, parseInt(document.getElementById('input-h').value) || 15);
+        if ('num_chars' in c) {
+            c.num_chars = parseInt(document.getElementById('input-numchars').value) || c.num_chars;
+        }
+        updateLiveBadge();
+        renderBoxes();
+    }
+
+    async function saveCalibration() {
+        const statusEl = document.getElementById('save-status');
+        statusEl.innerText = 'שומר...';
+        statusEl.className = 'small mb-2 text-muted';
+        try {
+            const res = await fetch('/api/calibration', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(coords)
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                statusEl.innerText = '✔ נשמר - הטופס הסופי ישתמש אך ורק בקואורדינטות האלה מעכשיו';
+                statusEl.className = 'small mb-2 text-success';
+            } else {
+                statusEl.innerText = 'שגיאה: ' + data.message;
+                statusEl.className = 'small mb-2 text-danger';
+            }
+        } catch (err) {
+            statusEl.innerText = 'שגיאת תקשורת';
+            statusEl.className = 'small mb-2 text-danger';
+        }
+    }
+
+    async function serverVerify() {
+        const statusEl = document.getElementById('save-status');
+        statusEl.innerText = 'מפיק PDF אמיתי מהשרת לאימות...';
+        statusEl.className = 'small mb-2 text-muted';
+        const res = await fetch('/api/calibration/preview', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(coords)
+        });
+        if (!res.ok) { statusEl.innerText = 'שגיאה בהפקת PDF'; statusEl.className='small mb-2 text-danger'; return; }
+        const warningsHeader = res.headers.get('X-Overflow-Warnings-B64');
+        const warnings = warningsHeader ? JSON.parse(decodeURIComponent(escape(atob(warningsHeader)))) : [];
+        statusEl.innerText = warnings.length ? `השרת מצא ${warnings.length} בעיות Overflow אמיתיות - נפתח PDF` : 'השרת מאשר: אין Overflow - נפתח PDF';
+        statusEl.className = warnings.length ? 'small mb-2 text-danger' : 'small mb-2 text-success';
+        const blob = await res.blob();
+        window.open(URL.createObjectURL(blob), '_blank');
+    }
+
+    loadCoordinates();
+</script>
+</body>
+</html>
