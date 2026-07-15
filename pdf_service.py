@@ -2,10 +2,68 @@
 import os
 import base64
 import json
+import re
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 
-from field_coordinates import DEFAULT_FIELD_COORDINATES
+# המילון שולב ישירות לקובץ עם הקואורדינטות המדויקות מה-JSON שסיפקת
+DEFAULT_FIELD_COORDINATES = {
+    "tax_year": {"x": 218, "y": 83, "width": 68, "height": 17, "num_chars": 4},
+    "employer_name": {"x": 250, "y": 120, "width": 200, "height": 20},
+    "employer_tik_nikuyim": {"x": 650, "y": 120, "width": 150, "height": 20, "num_chars": 8},
+    "tz": {"x": 439, "y": 211, "width": 101, "height": 24, "num_chars": 9},
+    "last_name": {"x": 314, "y": 212, "width": 123, "height": 27},
+    "first_name": {"x": 210, "y": 210, "width": 100, "height": 27},
+    "birth_date": {"x": 120, "y": 212, "width": 88, "height": 25, "num_chars": 8},
+    "sex_female": {"x": 506, "y": 293, "width": 28, "height": 11},
+    "sex_male": {"x": 550, "y": 293, "width": 28, "height": 11}, # מיקום משוער ע"ב הנקבה
+    "address_street": {"x": 226, "y": 240, "width": 164, "height": 22},
+    "address_house_num": {"x": 204, "y": 241, "width": 22, "height": 19},
+    "address_city": {"x": 109, "y": 241, "width": 94, "height": 23},
+    "address_zip": {"x": 50, "y": 241, "width": 50, "height": 20},
+    "kupat_holim_name": {"x": 33, "y": 291, "width": 39, "height": 12},
+    "resident_yes": {"x": 290, "y": 276, "width": 27, "height": 14},
+    "resident_no": {"x": 250, "y": 276, "width": 27, "height": 14},
+    "marital_single": {"x": 457, "y": 276, "width": 36, "height": 15},
+    "marital_married": {"x": 391, "y": 278, "width": 42, "height": 13},
+    "other_income_salary": {"x": 169, "y": 357, "width": 76, "height": 11},
+    "work_start_date": {"x": 31, "y": 372, "width": 91, "height": 18, "num_chars": 8},
+    "declaration_date": {"x": 146, "y": 641, "width": 78, "height": 14, "num_chars": 8},
+    "mobile": {"x": 180, "y": 345, "width": 150, "height": 20},
+    "email": {"x": 500, "y": 345, "width": 250, "height": 20},
+    "spouse_tz": {"x": 180, "y": 470, "width": 198, "height": 20, "num_chars": 9},
+    "spouse_last_name": {"x": 450, "y": 470, "width": 150, "height": 20},
+    "spouse_first_name": {"x": 700, "y": 470, "width": 150, "height": 20},
+    "spouse_birth_date": {"x": 180, "y": 510, "width": 100, "height": 20, "num_chars": 8},
+    "spouse_aliyah_date": {"x": 350, "y": 510, "width": 100, "height": 20, "num_chars": 8},
+    "spouse_income_none": {"x": 450, "y": 510, "width": 15, "height": 15},
+    "spouse_income_has": {"x": 600, "y": 510, "width": 15, "height": 15},
+    "child_name": {"x": 180, "y": 600, "width": 150, "height": 20},
+    "child_tz": {"x": 450, "y": 600, "width": 198, "height": 20, "num_chars": 9, "step_x": 22},
+    "child_dob": {"x": 720, "y": 600, "width": 100, "height": 20, "num_chars": 8, "step_x": 12},
+    "child_row_height": {"y": 28},
+    "no_other_income": {"x": 150, "y": 780, "width": 15, "height": 15},
+    "other_income_pension": {"x": 150, "y": 840, "width": 15, "height": 15},
+    "other_income_allowance": {"x": 150, "y": 870, "width": 15, "height": 15},
+    "other_income_partial": {"x": 150, "y": 900, "width": 15, "height": 15},
+    "credit_here": {"x": 500, "y": 780, "width": 15, "height": 15},
+    "credit_nothere": {"x": 500, "y": 810, "width": 15, "height": 15},
+    "tax_coordination_approval": {"x": 150, "y": 880, "width": 15, "height": 15},
+    "credit_disabled_blind": {"x": 120, "y": 940, "width": 15, "height": 15},
+    "credit_resident_locality": {"x": 120, "y": 970, "width": 15, "height": 15},
+    "locality_name": {"x": 300, "y": 970, "width": 150, "height": 20},
+    "credit_single_parent": {"x": 120, "y": 1000, "width": 15, "height": 15},
+    "credit_children_in_custody": {"x": 120, "y": 1030, "width": 15, "height": 15},
+    "credit_children_not_in_custody": {"x": 120, "y": 1060, "width": 15, "height": 15},
+    "credit_single_parent_toddlers": {"x": 120, "y": 1090, "width": 15, "height": 15},
+    "credit_children_disabled": {"x": 120, "y": 1120, "width": 15, "height": 15},
+    "credit_alimony_ex_spouse": {"x": 120, "y": 1150, "width": 15, "height": 15},
+    "credit_academic_degree": {"x": 120, "y": 1180, "width": 15, "height": 15},
+    "credit_reserve_duty": {"x": 120, "y": 1210, "width": 15, "height": 15},
+    "credit_new_immigrant": {"x": 120, "y": 1240, "width": 15, "height": 15},
+    "declared_true": {"x": 120, "y": 1260, "width": 15, "height": 15},
+    "signature": {"x": 220, "y": 1300, "width": 160, "height": 70}
+}
 
 MAX_FONT_SIZE = 30
 MIN_FONT_SIZE = 12
@@ -93,17 +151,18 @@ def draw_grid_cells_autofit(draw, text: str, box: dict, num_chars: int, overflow
 
 
 def draw_checkbox(draw, is_checked: bool, box: dict):
-    if is_checked:
+    if is_checked or str(is_checked).lower() == "true":
         font = load_font(min(CHECKBOX_FONT_SIZE, max(box["width"], box["height"])))
         draw.text((box["x"], box["y"]), "X", fill="black", font=font)
 
 
-def to_ddmmyy_digits(iso_date: str) -> str:
+def to_ddmmyy_digits(iso_date: str, is_8_digits: bool = False) -> str:
+    """מעבד תאריך. אם הקואורדינטה דורשת 8 ספרות (YYYY), מחזיר בהתאם, אחרת 6 ספרות (YY)"""
     if not iso_date:
         return ""
     try:
         year, month, day = iso_date.split("-")
-        return f"{day}{month}{year[2:]}"
+        return f"{day}{month}{year}" if is_8_digits else f"{day}{month}{year[2:]}"
     except Exception:
         return ""
 
@@ -136,8 +195,9 @@ def generate_101_pdf(form_data: dict, signature_base64: str = None, coordinates:
     page2 = Image.open("form101_page2.jpg").convert('RGB')
     draw = ImageDraw.Draw(page1)
 
-    # === שנת המס ===
-    draw_text_autofit(draw, form_data.get("tax_year", ""), _box(coords, "tax_year"), overflow_log, "tax_year", max_size=BOLD_MAX_FONT_SIZE)
+    # === שנת המס (עודכן ל-Grid ע"ב ה-JSON) ===
+    b_tax = _box(coords, "tax_year")
+    draw_grid_cells_autofit(draw, form_data.get("tax_year", ""), b_tax, b_tax["num_chars"] or 4, overflow_log, "tax_year", b_tax.get("step_x"))
 
     # === חלק א' - פרטי המעסיק ===
     draw_text_autofit(draw, form_data.get("employer_name", ""), _box(coords, "employer_name"), overflow_log, "employer_name")
@@ -145,22 +205,31 @@ def generate_101_pdf(form_data: dict, signature_base64: str = None, coordinates:
     tik_value = str(form_data.get("employer_tik_nikuyim", ""))
     tik_remaining = tik_value[1:] if tik_value.startswith("9") else tik_value
     b = _box(coords, "employer_tik_nikuyim")
-    draw_grid_cells_autofit(draw, tik_remaining, b, b["num_chars"] or 8, overflow_log, "employer_tik_nikuyim", b["step_x"])
+    draw_grid_cells_autofit(draw, tik_remaining, b, b["num_chars"] or 8, overflow_log, "employer_tik_nikuyim", b.get("step_x"))
 
     # === חלק ב' - פרטי העובד/ת ===
     b = _box(coords, "tz")
-    draw_grid_cells_autofit(draw, form_data.get("tz", ""), b, b["num_chars"] or 9, overflow_log, "tz", b["step_x"])
+    draw_grid_cells_autofit(draw, form_data.get("tz", ""), b, b["num_chars"] or 9, overflow_log, "tz", b.get("step_x"))
     draw_text_autofit(draw, form_data.get("last_name", ""), _box(coords, "last_name"), overflow_log, "last_name")
     draw_text_autofit(draw, form_data.get("first_name", ""), _box(coords, "first_name"), overflow_log, "first_name")
-    b = _box(coords, "birth_date")
-    draw_grid_cells_autofit(draw, to_ddmmyy_digits(form_data.get("birth_date", "")), b, b["num_chars"] or 6, overflow_log, "birth_date", b["step_x"])
-    b = _box(coords, "aliyah_date")
-    draw_grid_cells_autofit(draw, to_ddmmyy_digits(form_data.get("aliyah_date", "")), b, b["num_chars"] or 6, overflow_log, "aliyah_date", b["step_x"])
+    
+    b_birth = _box(coords, "birth_date")
+    draw_grid_cells_autofit(draw, to_ddmmyy_digits(form_data.get("birth_date", ""), b_birth["num_chars"] == 8), b_birth, b_birth["num_chars"] or 6, overflow_log, "birth_date", b_birth.get("step_x"))
+    
+    b_aliyah = _box(coords, "aliyah_date")
+    draw_grid_cells_autofit(draw, to_ddmmyy_digits(form_data.get("aliyah_date", ""), b_aliyah["num_chars"] == 8), b_aliyah, b_aliyah["num_chars"] or 6, overflow_log, "aliyah_date", b_aliyah.get("step_x"))
 
     sex_box = _box(coords, "sex_male") if form_data.get("sex") == "זכר" else _box(coords, "sex_female")
     draw_checkbox(draw, True, sex_box)
 
-    draw_text_autofit(draw, form_data.get("address_street", ""), _box(coords, "address_street"), overflow_log, "address_street")
+    # חילוץ רחוב ומספר בית מתוך השדה המשולב
+    address = str(form_data.get("address_street", ""))
+    match = re.search(r'([^\d]+)\s*(\d+)?', address)
+    street = match.group(1).strip() if match else address
+    house_num = match.group(2) if match and match.group(2) else ""
+
+    draw_text_autofit(draw, street, _box(coords, "address_street"), overflow_log, "address_street")
+    draw_text_autofit(draw, house_num, _box(coords, "address_house_num"), overflow_log, "address_house_num")
     draw_text_autofit(draw, form_data.get("address_city", ""), _box(coords, "address_city"), overflow_log, "address_city")
     draw_text_autofit(draw, form_data.get("address_zip", "") or "", _box(coords, "address_zip"), overflow_log, "address_zip")
 
@@ -170,25 +239,27 @@ def generate_101_pdf(form_data: dict, signature_base64: str = None, coordinates:
 
     draw_text_autofit(draw, form_data.get("kupat_holim_name", ""), _box(coords, "kupat_holim_name"), overflow_log, "kupat_holim_name")
 
-    is_resident = form_data.get("is_israeli_resident") == "true" or form_data.get("is_israeli_resident") is True
+    is_resident = str(form_data.get("is_israeli_resident")).lower() == "true"
     draw_checkbox(draw, is_resident, _box(coords, "resident_yes"))
     draw_checkbox(draw, not is_resident, _box(coords, "resident_no"))
 
-    if form_data.get("has_spouse"):
+    if form_data.get("has_spouse") or form_data.get("marital_status") == "נשוי/ה":
         draw_checkbox(draw, True, _box(coords, "marital_married"))
     else:
         draw_checkbox(draw, True, _box(coords, "marital_single"))
 
     # === חלק ג' - פרטי בן/בת הזוג ===
-    if form_data.get("has_spouse"):
+    if form_data.get("has_spouse") or form_data.get("marital_status") == "נשוי/ה":
         b = _box(coords, "spouse_tz")
-        draw_grid_cells_autofit(draw, form_data.get("spouse_tz", ""), b, b["num_chars"] or 9, overflow_log, "spouse_tz", b["step_x"])
+        draw_grid_cells_autofit(draw, form_data.get("spouse_tz", ""), b, b["num_chars"] or 9, overflow_log, "spouse_tz", b.get("step_x"))
         draw_text_autofit(draw, form_data.get("spouse_last_name", ""), _box(coords, "spouse_last_name"), overflow_log, "spouse_last_name")
         draw_text_autofit(draw, form_data.get("spouse_first_name", ""), _box(coords, "spouse_first_name"), overflow_log, "spouse_first_name")
+        
         b = _box(coords, "spouse_birth_date")
-        draw_grid_cells_autofit(draw, to_ddmmyy_digits(form_data.get("spouse_birth_date", "")), b, b["num_chars"] or 6, overflow_log, "spouse_birth_date", b["step_x"])
+        draw_grid_cells_autofit(draw, to_ddmmyy_digits(form_data.get("spouse_birth_date", ""), b["num_chars"] == 8), b, b["num_chars"] or 6, overflow_log, "spouse_birth_date", b.get("step_x"))
+        
         b = _box(coords, "spouse_aliyah_date")
-        draw_grid_cells_autofit(draw, to_ddmmyy_digits(form_data.get("spouse_aliyah_date", "")), b, b["num_chars"] or 6, overflow_log, "spouse_aliyah_date", b["step_x"])
+        draw_grid_cells_autofit(draw, to_ddmmyy_digits(form_data.get("spouse_aliyah_date", ""), b["num_chars"] == 8), b, b["num_chars"] or 6, overflow_log, "spouse_aliyah_date", b.get("step_x"))
 
         spouse_income = form_data.get("spouse_has_income")
         if spouse_income == "אין לו/לה הכנסה":
@@ -197,7 +268,7 @@ def generate_101_pdf(form_data: dict, signature_base64: str = None, coordinates:
             draw_checkbox(draw, True, _box(coords, "spouse_income_has"))
 
     # === חלק ד' - פרטי ילדים ===
-    children_raw = form_data.get("children_json", "[]")
+    children_raw = form_data.get("children_json", form_data.get("children_data", "[]"))
     try:
         children_list = json.loads(children_raw) if isinstance(children_raw, str) else children_raw
     except Exception:
@@ -215,8 +286,8 @@ def generate_101_pdf(form_data: dict, signature_base64: str = None, coordinates:
         dob_box = dict(dob_box_base, y=dob_box_base["y"] + offset)
 
         draw_text_autofit(draw, child.get("name", ""), name_box, overflow_log, f"child_name[{index}]")
-        draw_grid_cells_autofit(draw, child.get("tz", ""), tz_box, tz_box_base["num_chars"] or 9, overflow_log, f"child_tz[{index}]", tz_box_base["step_x"])
-        draw_grid_cells_autofit(draw, to_ddmmyy_digits(child.get("dob", "")), dob_box, dob_box_base["num_chars"] or 6, overflow_log, f"child_dob[{index}]", dob_box_base["step_x"])
+        draw_grid_cells_autofit(draw, child.get("tz", ""), tz_box, tz_box_base["num_chars"] or 9, overflow_log, f"child_tz[{index}]", tz_box_base.get("step_x"))
+        draw_grid_cells_autofit(draw, to_ddmmyy_digits(child.get("dob", ""), dob_box["num_chars"] == 8), dob_box, dob_box_base["num_chars"] or 6, overflow_log, f"child_dob[{index}]", dob_box_base.get("step_x"))
 
     # === חלק ה'/ו' - הכנסות נוספות ותיאום מס ===
     draw_checkbox(draw, form_data.get("no_other_income", False), _box(coords, "no_other_income"))
@@ -275,7 +346,7 @@ def generate_101_pdf_with_debug_boxes(form_data: dict, signature_base64: str, co
     pdf_path, overflow_log = generate_101_pdf(form_data, signature_base64, coordinates)
     overflow_fields = {o["field"] for o in overflow_log}
 
-    # מציירים מסגרות ישירות על עמוד 1 של ה-PDF שנוצר (נפתח מחדש כתמונה, מסמנים, שומרים שוב)
+    # מציירים מסגרות ישירות על עמוד 1 של ה-PDF שנוצר
     page1 = Image.open("form101_page1.jpg").convert('RGB')
     draw = ImageDraw.Draw(page1)
     coords = dict(DEFAULT_FIELD_COORDINATES)
